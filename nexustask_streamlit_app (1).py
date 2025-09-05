@@ -209,12 +209,3 @@ threejs_code = """
 
 components.v1.html(threejs_code, height=0)
 ```
-
-```txt
-# requirements.txt
-streamlit
-plotly
-pandas
-python-dateutil
-requests
-```
