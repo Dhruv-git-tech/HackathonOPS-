@@ -1,5 +1,2 @@
-streamlit
-plotly
-pandas
-python-dateutil
-requests
+pip install streamlit plotly pandas requests
+streamlit run app.py
