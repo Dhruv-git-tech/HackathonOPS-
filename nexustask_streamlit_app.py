@@ -1,11 +1,8 @@
 # app.py
 import streamlit as st
 import sqlite3
-import pandas as pd
-import plotly.express as px
 import requests, json
 from datetime import datetime
-from streamlit import components
 
 # ----------------- DATABASE -----------------
 def init_db():
@@ -77,7 +74,7 @@ def fetch_tasks(team=None, assigned_to=None):
         c.execute("SELECT * FROM tasks")
     rows = c.fetchall()
     conn.close()
-    return pd.DataFrame(rows, columns=["id","title","description","status","assigned_to","team","due_date"])
+    return rows
 
 def add_task(title, desc, assigned_to, team, due_date):
     conn = sqlite3.connect("nexustask.db")
@@ -126,15 +123,18 @@ else:
     if user['role'] == "admin":
         st.header("📊 Admin Dashboard")
         tasks = fetch_tasks()
-        st.dataframe(tasks, use_container_width=True)
-        fig = px.histogram(tasks, x="status", color="team", barmode="group", title="Task Status Distribution")
-        st.plotly_chart(fig, use_container_width=True)
+        st.table(tasks)
+        # Count by status
+        status_counts = {}
+        for t in tasks:
+            status_counts[t[3]] = status_counts.get(t[3], 0) + 1
+        st.bar_chart(status_counts)
 
     # Team Head
     elif user['role'] == "team_head":
         st.header("👥 Team Head Dashboard")
         tasks = fetch_tasks(team=user['team'])
-        st.dataframe(tasks, use_container_width=True)
+        st.table(tasks)
         with st.form("add_task"):
             title = st.text_input("Task Title")
             desc = st.text_area("Description")
@@ -148,12 +148,12 @@ else:
     elif user['role'] == "team_member":
         st.header("📝 My Tasks")
         tasks = fetch_tasks(assigned_to=user['username'])
-        st.dataframe(tasks, use_container_width=True)
+        st.table(tasks)
 
         api_key = st.text_input("Gemini API Key", type="password")
         if st.button("Break Down First Task"):
-            if not tasks.empty:
-                task_title = tasks.iloc[0]["title"]
+            if tasks:
+                task_title = tasks[0][1]
                 st.info(gemini_breakdown(task_title, api_key))
 
 # ----------------- 3D BACKGROUND -----------------
@@ -168,7 +168,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const starsGeometry = new THREE.BufferGeometry();
-const starCount = 3000;
+const starCount = 2000;
 const positions = [];
 for (let i = 0; i < starCount; i++) {
     positions.push((Math.random() - 0.5) * 2000);
@@ -190,4 +190,4 @@ function animate() {
 animate();
 </script>
 """
-components.v1.html(threejs, height=0)
+st.components.v1.html(threejs, height=0)
