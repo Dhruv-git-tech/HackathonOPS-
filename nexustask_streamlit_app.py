@@ -1,193 +1,149 @@
-# app.py
 import streamlit as st
-import sqlite3
-import requests, json
-from datetime import datetime
+import plotly.express as px
+import streamlit.components.v1 as components
 
-# ----------------- DATABASE -----------------
-def init_db():
-    conn = sqlite3.connect("nexustask.db")
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT,
-                    password TEXT,
-                    role TEXT,
-                    team TEXT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS tasks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    title TEXT,
-                    description TEXT,
-                    status TEXT,
-                    assigned_to TEXT,
-                    team TEXT,
-                    due_date TEXT)''')
-    conn.commit()
-    conn.close()
+# ---------------- MOCK DATA ---------------- #
+USERS = {
+    "admin": {"password": "123", "role": "Admin"},
+    "head": {"password": "123", "role": "Team Head"},
+    "member": {"password": "123", "role": "Team Member"},
+}
 
-def seed_data():
-    conn = sqlite3.connect("nexustask.db")
-    c = conn.cursor()
-    c.execute("SELECT * FROM users")
-    if not c.fetchall():
-        users = [
-            ("admin", "admin", "admin", "All"),
-            ("alice", "123", "team_head", "Alpha"),
-            ("bob", "123", "team_member", "Alpha"),
-            ("carol", "123", "team_head", "Beta"),
-            ("dave", "123", "team_member", "Beta"),
-        ]
-        c.executemany("INSERT INTO users (username,password,role,team) VALUES (?,?,?,?)", users)
+TASKS = [
+    {"id": 1, "title": "Design UI", "status": "Pending", "assigned_to": "member"},
+    {"id": 2, "title": "Backend API", "status": "In Progress", "assigned_to": "head"},
+    {"id": 3, "title": "Testing", "status": "Completed", "assigned_to": "member"},
+]
 
-    c.execute("SELECT * FROM tasks")
-    if not c.fetchall():
-        tasks = [
-            ("Design UI", "Homepage mockup", "Pending", "bob", "Alpha", "2025-09-10"),
-            ("Backend API", "Login API", "In Progress", "bob", "Alpha", "2025-09-12"),
-            ("Testing", "Unit tests for Beta", "Completed", "dave", "Beta", "2025-09-08"),
-        ]
-        c.executemany("INSERT INTO tasks (title,description,status,assigned_to,team,due_date) VALUES (?,?,?,?,?,?)", tasks)
+STATUS_COLORS = {"Pending": "#FFD700", "In Progress": "#1E90FF", "Completed": "#32CD32"}
 
-    conn.commit()
-    conn.close()
+# ---------------- PAGE CONFIG ---------------- #
+st.set_page_config(page_title="Nexus Task Manager", layout="wide")
 
-init_db()
-seed_data()
+# Inject custom CSS
+st.markdown(
+    """
+    <style>
+    body {
+        background: transparent;
+        color: #E0E0E0;
+        font-family: 'Segoe UI', sans-serif;
+    }
+    .task-card {
+        background: rgba(255,255,255,0.08);
+        border-radius: 16px;
+        padding: 16px;
+        margin: 10px 0;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        backdrop-filter: blur(12px);
+    }
+    .status-badge {
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        font-weight: bold;
+        color: black;
+    }
+    .title {
+        text-align: center;
+        font-size: 2em;
+        font-weight: bold;
+        margin-bottom: 10px;
+        color: #00E5FF;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# ----------------- HELPERS -----------------
-def login_user(username, password):
-    conn = sqlite3.connect("nexustask.db")
-    c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
-    user = c.fetchone()
-    conn.close()
-    return user
+# ---------------- STARFIELD BACKGROUND ---------------- #
+starfield_html = """
+<canvas id="stars"></canvas>
+<script>
+  const canvas = document.getElementById("stars");
+  const ctx = canvas.getContext("2d");
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  let stars = [];
+  for (let i=0;i<200;i++){
+    stars.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height,r:Math.random()*2});
+  }
+  function drawStars(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle="white";
+    stars.forEach(s=>{
+      ctx.beginPath();
+      ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+      ctx.fill();
+    });
+  }
+  setInterval(drawStars,50);
+</script>
+<style>
+#stars {
+  position: fixed;
+  top:0; left:0;
+  width:100%; height:100%;
+  z-index:-1;
+  background:black;
+}
+</style>
+"""
+components.html(starfield_html, height=0, width=0)
 
-def fetch_tasks(team=None, assigned_to=None):
-    conn = sqlite3.connect("nexustask.db")
-    c = conn.cursor()
-    if assigned_to:
-        c.execute("SELECT * FROM tasks WHERE assigned_to=?", (assigned_to,))
-    elif team:
-        c.execute("SELECT * FROM tasks WHERE team=?", (team,))
-    else:
-        c.execute("SELECT * FROM tasks")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def add_task(title, desc, assigned_to, team, due_date):
-    conn = sqlite3.connect("nexustask.db")
-    c = conn.cursor()
-    c.execute("INSERT INTO tasks (title,description,status,assigned_to,team,due_date) VALUES (?,?,?,?,?,?)",
-              (title, desc, "Pending", assigned_to, team, due_date))
-    conn.commit()
-    conn.close()
-
-def gemini_breakdown(task_title, api_key):
-    try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
-        headers = {"Content-Type": "application/json"}
-        params = {"key": api_key}
-        data = {"contents": [{"parts": [{"text": f"Break down the task: {task_title} into subtasks"}]}]}
-        resp = requests.post(url, headers=headers, params=params, data=json.dumps(data))
-        return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        return f"Error: {e}"
-
-# ----------------- STREAMLIT -----------------
-st.set_page_config(page_title="NexusTask", layout="wide")
-
+# ---------------- LOGIN ---------------- #
 if "user" not in st.session_state:
     st.session_state.user = None
 
-if st.session_state.user is None:
-    st.markdown("<h1 style='text-align:center;'>🔑 NexusTask Login</h1>", unsafe_allow_html=True)
+if not st.session_state.user:
+    st.markdown("<div class='title'>🌌 Nexus Task Manager</div>", unsafe_allow_html=True)
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     if st.button("Login"):
-        user = login_user(username, password)
-        if user:
-            st.session_state.user = {"id": user[0], "username": user[1], "role": user[3], "team": user[4]}
+        if username in USERS and USERS[username]["password"] == password:
+            st.session_state.user = {"name": username, "role": USERS[username]["role"]}
             st.rerun()
         else:
-            st.error("Invalid credentials")
+            st.error("Invalid username or password")
+    st.stop()
+
+# ---------------- DASHBOARD ---------------- #
+user = st.session_state.user
+st.markdown(f"<div class='title'>Welcome, {user['role']}</div>", unsafe_allow_html=True)
+
+# Filter tasks for role
+if user["role"] == "Team Member":
+    visible_tasks = [t for t in TASKS if t["assigned_to"] == user["name"]]
 else:
-    user = st.session_state.user
-    st.sidebar.success(f"👤 {user['username']} ({user['role']})")
-    if st.sidebar.button("Logout"):
-        st.session_state.user = None
-        st.rerun()
+    visible_tasks = TASKS
 
-    # Admin
-    if user['role'] == "admin":
-        st.header("📊 Admin Dashboard")
-        tasks = fetch_tasks()
-        st.table(tasks)
-        # Count by status
-        status_counts = {}
-        for t in tasks:
-            status_counts[t[3]] = status_counts.get(t[3], 0) + 1
-        st.bar_chart(status_counts)
+# Task cards
+st.subheader("📋 Tasks")
+for t in visible_tasks:
+    color = STATUS_COLORS[t["status"]]
+    st.markdown(
+        f"""
+        <div class="task-card">
+            <b>{t['title']}</b><br>
+            <span class="status-badge" style="background:{color}">{t['status']}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # Team Head
-    elif user['role'] == "team_head":
-        st.header("👥 Team Head Dashboard")
-        tasks = fetch_tasks(team=user['team'])
-        st.table(tasks)
-        with st.form("add_task"):
-            title = st.text_input("Task Title")
-            desc = st.text_area("Description")
-            assigned_to = st.text_input("Assign To")
-            due_date = st.date_input("Due Date")
-            if st.form_submit_button("Add Task"):
-                add_task(title, desc, assigned_to, user['team'], due_date.strftime('%Y-%m-%d'))
-                st.success("✅ Task added!")
+# Chart
+st.subheader("📊 Task Status Overview")
+df = {s: sum(1 for t in TASKS if t["status"] == s) for s in STATUS_COLORS}
+fig = px.pie(
+    names=list(df.keys()),
+    values=list(df.values()),
+    color=list(df.keys()),
+    color_discrete_map=STATUS_COLORS,
+    title="Tasks by Status",
+)
+st.plotly_chart(fig, use_container_width=True)
 
-    # Team Member
-    elif user['role'] == "team_member":
-        st.header("📝 My Tasks")
-        tasks = fetch_tasks(assigned_to=user['username'])
-        st.table(tasks)
-
-        api_key = st.text_input("Gemini API Key", type="password")
-        if st.button("Break Down First Task"):
-            if tasks:
-                task_title = tasks[0][1]
-                st.info(gemini_breakdown(task_title, api_key))
-
-# ----------------- 3D BACKGROUND -----------------
-threejs = """
-<canvas id="bg"></canvas>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script>
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({canvas: document.getElementById('bg'), alpha: true});
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
-
-const starsGeometry = new THREE.BufferGeometry();
-const starCount = 2000;
-const positions = [];
-for (let i = 0; i < starCount; i++) {
-    positions.push((Math.random() - 0.5) * 2000);
-    positions.push((Math.random() - 0.5) * 2000);
-    positions.push((Math.random() - 0.5) * 2000);
-}
-starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-const starsMaterial = new THREE.PointsMaterial({color: 0xffffff});
-const stars = new THREE.Points(starsGeometry, starsMaterial);
-scene.add(stars);
-
-camera.position.z = 500;
-function animate() {
-    requestAnimationFrame(animate);
-    stars.rotation.x += 0.0005;
-    stars.rotation.y += 0.0005;
-    renderer.render(scene, camera);
-}
-animate();
-</script>
-"""
-st.components.v1.html(threejs, height=0)
+# Logout
+if st.button("Logout"):
+    st.session_state.user = None
+    st.rerun()
